@@ -1,29 +1,24 @@
-﻿using Microsoft.AspNetCore;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.eShopOnContainers.Mobile.Shopping.HttpAggregator;
-using Serilog;
+﻿var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
 
-BuildWebHost(args).Run();
-IWebHost BuildWebHost(string[] args) =>
-    WebHost
-        .CreateDefaultBuilder(args)
-        .ConfigureAppConfiguration(cb =>
-        {
-            var sources = cb.Sources;
-            sources.Insert(3, new Microsoft.Extensions.Configuration.Json.JsonConfigurationSource()
-            {
-                Optional = true,
-                Path = "appsettings.localhost.json",
-                ReloadOnChange = false
-            });
-        })
-        .UseStartup<Startup>()
-        .UseSerilog((builderContext, config) =>
-        {
-            config
-                .MinimumLevel.Information()
-                .Enrich.FromLogContext()
-                .WriteTo.Console();
-        })
-        .Build();
+builder.Services.AddReverseProxy(builder.Configuration);
+builder.Services.AddControllers();
+
+builder.Services.AddHealthChecks(builder.Configuration);
+
+builder.Services.AddApplicationServices();
+builder.Services.AddGrpcServices();
+
+builder.Services.Configure<UrlsConfig>(builder.Configuration.GetSection("urls"));
+
+var app = builder.Build();
+
+app.UseServiceDefaults();
+
+app.UseHttpsRedirection();
+
+app.MapControllers();
+app.MapReverseProxy();
+
+await app.RunAsync();

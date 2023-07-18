@@ -1,106 +1,63 @@
-﻿using IdentityServer4.EntityFramework.DbContexts;
-using Microsoft.AspNetCore;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.eShopOnContainers.Services.Identity.API;
-using Microsoft.eShopOnContainers.Services.Identity.API.Data;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Serilog;
-using System;
-using System.IO;
-using Azure.Identity;
-using Azure.Core;
+﻿var builder = WebApplication.CreateBuilder(args);
 
-string Namespace = typeof(Startup).Namespace;
-string AppName = Namespace.Substring(Namespace.LastIndexOf('.', Namespace.LastIndexOf('.') - 1) + 1);
+builder.AddServiceDefaults();
 
-var configuration = GetConfiguration();
+builder.Services.AddControllersWithViews();
 
-Log.Logger = CreateSerilogLogger(configuration);
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("IdentityDB")));
 
-try
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
+        .AddEntityFrameworkStores<ApplicationDbContext>()
+        .AddDefaultTokenProviders();
+
+builder.Services.AddIdentityServer(options =>
 {
-    Log.Information("Configuring web host ({ApplicationContext})...", AppName);
-    var host = BuildWebHost(configuration, args);
+    options.IssuerUri = "null";
+    options.Authentication.CookieLifetime = TimeSpan.FromHours(2);
 
-    Log.Information("Applying migrations ({ApplicationContext})...", AppName);
-    host.MigrateDbContext<PersistedGrantDbContext>((_, __) => { })
-        .MigrateDbContext<ApplicationDbContext>((context, services) =>
-        {
-            var env = services.GetService<IWebHostEnvironment>();
-            var logger = services.GetService<ILogger<ApplicationDbContextSeed>>();
-            var settings = services.GetService<IOptions<AppSettings>>();
+    options.Events.RaiseErrorEvents = true;
+    options.Events.RaiseInformationEvents = true;
+    options.Events.RaiseFailureEvents = true;
+    options.Events.RaiseSuccessEvents = true;
+})
+.AddInMemoryIdentityResources(Config.GetResources())
+.AddInMemoryApiScopes(Config.GetApiScopes())
+.AddInMemoryApiResources(Config.GetApis())
+.AddInMemoryClients(Config.GetClients(builder.Configuration))
+.AddAspNetIdentity<ApplicationUser>()
+.AddDeveloperSigningCredential(); // Not recommended for production - you need to store your key material somewhere secure
 
-            new ApplicationDbContextSeed()
-                .SeedAsync(context, env, logger, settings)
-                .Wait();
-        })
-        .MigrateDbContext<ConfigurationDbContext>((context, services) =>
-        {
-            new ConfigurationDbContextSeed()
-                .SeedAsync(context, configuration)
-                .Wait();
-        });
+builder.Services.AddHealthChecks()
+        .AddSqlServer(_ =>
+            builder.Configuration.GetRequiredConnectionString("IdentityDB"),
+            name: "IdentityDB-check",
+            tags: new string[] { "IdentityDB" });
 
-    Log.Information("Starting web host ({ApplicationContext})...", AppName);
-    host.Run();
+builder.Services.AddTransient<IProfileService, ProfileService>();
+builder.Services.AddTransient<ILoginService<ApplicationUser>, EFLoginService>();
+builder.Services.AddTransient<IRedirectService, RedirectService>();
 
-    return 0;
-}
-catch (Exception ex)
+var app = builder.Build();
+
+app.UseServiceDefaults();
+
+app.UseStaticFiles();
+
+// This cookie policy fixes login issues with Chrome 80+ using HHTP
+app.UseCookiePolicy(new CookiePolicyOptions { MinimumSameSitePolicy = SameSiteMode.Lax });
+app.UseRouting();
+app.UseIdentityServer();
+app.UseAuthorization();
+
+app.MapDefaultControllerRoute();
+
+// Apply database migration automatically. Note that this approach is not
+// recommended for production scenarios. Consider generating SQL scripts from
+// migrations instead.
+using (var scope = app.Services.CreateScope())
 {
-    Log.Fatal(ex, "Program terminated unexpectedly ({ApplicationContext})!", AppName);
-    return 1;
-}
-finally
-{
-    Log.CloseAndFlush();
-}
-
-IWebHost BuildWebHost(IConfiguration configuration, string[] args) =>
-    WebHost.CreateDefaultBuilder(args)
-        .CaptureStartupErrors(false)
-        .ConfigureAppConfiguration(x => x.AddConfiguration(configuration))
-        .UseStartup<Startup>()
-        .UseContentRoot(Directory.GetCurrentDirectory())
-        .UseSerilog()
-        .Build();
-
-Serilog.ILogger CreateSerilogLogger(IConfiguration configuration)
-{
-    var seqServerUrl = configuration["Serilog:SeqServerUrl"];
-    var logstashUrl = configuration["Serilog:LogstashgUrl"];
-    return new LoggerConfiguration()
-        .MinimumLevel.Verbose()
-        .Enrich.WithProperty("ApplicationContext", AppName)
-        .Enrich.FromLogContext()
-        .WriteTo.Console()
-        .WriteTo.Seq(string.IsNullOrWhiteSpace(seqServerUrl) ? "http://seq" : seqServerUrl)
-        .WriteTo.Http(string.IsNullOrWhiteSpace(logstashUrl) ? "http://localhost:8080" : logstashUrl)
-        .ReadFrom.Configuration(configuration)
-        .CreateLogger();
+    await SeedData.EnsureSeedData(scope, app.Configuration, app.Logger);
 }
 
-IConfiguration GetConfiguration()
-{
-    var builder = new ConfigurationBuilder()
-        .SetBasePath(Directory.GetCurrentDirectory())
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-        .AddEnvironmentVariables();
-
-    var config = builder.Build();
-
-    if (config.GetValue<bool>("UseVault", false))
-    {
-        TokenCredential credential = new ClientSecretCredential(
-            config["Vault:TenantId"],
-            config["Vault:ClientId"],
-            config["Vault:ClientSecret"]);
-        builder.AddAzureKeyVault(new Uri($"https://{config["Vault:Name"]}.vault.azure.net/"), credential);
-    }
-
-    return builder.Build();
-}
+await app.RunAsync();

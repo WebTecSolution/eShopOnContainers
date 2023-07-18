@@ -1,43 +1,67 @@
-﻿using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.Configuration;
-using System.IO;
-using System.Reflection;
+﻿using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Hosting;
 
-namespace Basket.FunctionalTests.Base
+namespace Basket.FunctionalTests.Base;
+
+public class BasketScenarioBase
 {
-    public class BasketScenarioBase
+    private const string ApiUrlBase = "api/v1/basket";
+
+    public TestServer CreateServer()
     {
-        private const string ApiUrlBase = "api/v1/basket";
+        var factory = new BasketApplication();
+        return factory.Server;
+    }
 
-        public TestServer CreateServer()
+    public static class Get
+    {
+        public static string GetBasket(int id)
         {
-            var path = Assembly.GetAssembly(typeof(BasketScenarioBase))
-               .Location;
-
-            var hostBuilder = new WebHostBuilder()
-                .UseContentRoot(Path.GetDirectoryName(path))
-                .ConfigureAppConfiguration(cb =>
-                {
-                    cb.AddJsonFile("appsettings.json", optional: false)
-                    .AddEnvironmentVariables();
-                }).UseStartup<BasketTestsStartup>();
-
-            return new TestServer(hostBuilder);
+            return $"{ApiUrlBase}/{id}";
         }
 
-        public static class Get
+        public static string GetBasketByCustomer(string customerId)
         {
-            public static string GetBasket(int id)
+            return $"{ApiUrlBase}/{customerId}";
+        }
+    }
+
+    public static class Post
+    {
+        public static string Basket = $"{ApiUrlBase}/";
+        public static string CheckoutOrder = $"{ApiUrlBase}/checkout";
+    }
+
+    private class BasketApplication : WebApplicationFactory<Program>
+    {
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            builder.ConfigureServices(services =>
             {
-                return $"{ApiUrlBase}/{id}";
-            }
+                services.AddSingleton<IStartupFilter, AuthStartupFilter>();
+            });
+
+            builder.ConfigureAppConfiguration(c =>
+            {
+                var directory = Path.GetDirectoryName(typeof(BasketScenarioBase).Assembly.Location)!;
+
+                c.AddJsonFile(Path.Combine(directory, "appsettings.Basket.json"), optional: false);
+            });
+
+            return base.CreateHost(builder);
         }
 
-        public static class Post
+        private class AuthStartupFilter : IStartupFilter
         {
-            public static string Basket = $"{ApiUrlBase}/";
-            public static string CheckoutOrder = $"{ApiUrlBase}/checkout";
+            public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+            {
+                return app =>
+                {
+                    app.UseMiddleware<AutoAuthorizeMiddleware>();
+
+                    next(app);
+                };
+            }
         }
     }
 }

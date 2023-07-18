@@ -1,65 +1,67 @@
-﻿using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.eShopOnContainers.BuildingBlocks.IntegrationEventLogEF;
-using Microsoft.eShopOnContainers.Services.Ordering.API;
-using Microsoft.eShopOnContainers.Services.Ordering.API.Infrastructure;
-using Microsoft.eShopOnContainers.Services.Ordering.Infrastructure;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using System.IO;
-using System.Reflection;
+﻿using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Hosting;
 
-namespace Ordering.FunctionalTests
+namespace Ordering.FunctionalTests;
+
+public class OrderingScenarioBase
 {
-    public class OrderingScenarioBase
+    private class OrderingApplication : WebApplicationFactory<Program>
     {
         public TestServer CreateServer()
         {
-            var path = Assembly.GetAssembly(typeof(OrderingScenarioBase))
-                .Location;
-
-            var hostBuilder = new WebHostBuilder()
-                .UseContentRoot(Path.GetDirectoryName(path))
-                .ConfigureAppConfiguration(cb =>
-                {
-                    cb.AddJsonFile("appsettings.json", optional: false)
-                    .AddEnvironmentVariables();
-                }).UseStartup<OrderingTestsStartup>();
-
-            var testServer = new TestServer(hostBuilder);
-
-            testServer.Host
-                .MigrateDbContext<OrderingContext>((context, services) =>
-                {
-                    var env = services.GetService<IWebHostEnvironment>();
-                    var settings = services.GetService<IOptions<OrderingSettings>>();
-                    var logger = services.GetService<ILogger<OrderingContextSeed>>();
-
-                    new OrderingContextSeed()
-                        .SeedAsync(context, env, settings, logger)
-                        .Wait();
-                })
-                .MigrateDbContext<IntegrationEventLogContext>((_, __) => { });
-
-            return testServer;
+            return Server;
         }
 
-        public static class Get
+        protected override IHost CreateHost(IHostBuilder builder)
         {
-            public static string Orders = "api/v1/orders";
-
-            public static string OrderBy(int id)
+            builder.ConfigureServices(services =>
             {
-                return $"api/v1/orders/{id}";
-            }
-        }
+                services.AddSingleton<IStartupFilter, AuthStartupFilter>();
+            });
 
-        public static class Put
+            builder.ConfigureAppConfiguration(c =>
+            {
+                var directory = Path.GetDirectoryName(typeof(OrderingScenarioBase).Assembly.Location)!;
+
+                c.AddJsonFile(Path.Combine(directory, "appsettings.Ordering.json"), optional: false);
+            });
+
+            return base.CreateHost(builder);
+        }
+    }
+
+    public TestServer CreateServer()
+    {
+        var factory = new OrderingApplication();
+        return factory.CreateServer();
+    }
+
+    public static class Get
+    {
+        public static string Orders = "api/v1/orders";
+
+        public static string OrderBy(int id)
         {
-            public static string CancelOrder = "api/v1/orders/cancel";
-            public static string ShipOrder = "api/v1/orders/ship";
+            return $"api/v1/orders/{id}";
+        }
+    }
+
+    public static class Put
+    {
+        public static string CancelOrder = "api/v1/orders/cancel";
+        public static string ShipOrder = "api/v1/orders/ship";
+    }
+
+    private class AuthStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+        {
+            return app =>
+            {
+                app.UseMiddleware<AutoAuthorizeMiddleware>();
+
+                next(app);
+            };
         }
     }
 }

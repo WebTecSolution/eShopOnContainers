@@ -1,93 +1,74 @@
-using Catalog.API.Extensions;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.eShopOnContainers.BuildingBlocks.IntegrationEventLogEF;
-using Microsoft.eShopOnContainers.Services.Catalog.API;
-using Microsoft.eShopOnContainers.Services.Catalog.API.Infrastructure;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using System.IO;
-using System.Reflection;
+﻿using System;
+using Microsoft.AspNetCore.Mvc.Testing;
 
-namespace Catalog.FunctionalTests
+namespace Catalog.FunctionalTests;
+
+public class CatalogScenariosBase 
 {
-    public class CatalogScenariosBase
+    private class CatalogApplication : WebApplicationFactory<Program>
     {
-        public TestServer CreateServer()
+        protected override IHost CreateHost(IHostBuilder builder)
         {
-            var path = Assembly.GetAssembly(typeof(CatalogScenariosBase))
-              .Location;
+            builder.ConfigureAppConfiguration(c =>
+            {
+                var directory = Path.GetDirectoryName(typeof(CatalogScenariosBase).Assembly.Location)!;
 
-            var hostBuilder = new WebHostBuilder()
-                .UseContentRoot(Path.GetDirectoryName(path))
-                .ConfigureAppConfiguration(cb =>
-                {
-                    cb.AddJsonFile("appsettings.json", optional: false)
-                    .AddEnvironmentVariables();
-                })
-                .UseStartup<Startup>();
+                c.AddJsonFile(Path.Combine(directory, "appsettings.Catalog.json"), optional: false);
+            });
 
+            return base.CreateHost(builder);
+        }
+    }
 
-            var testServer = new TestServer(hostBuilder);
+    public TestServer CreateServer()
+    {
+        var factory = new CatalogApplication();
+        return factory.Server;
+    }
 
-            testServer.Host
-                .MigrateDbContext<CatalogContext>((context, services) =>
-                {
-                    var env = services.GetService<IWebHostEnvironment>();
-                    var settings = services.GetService<IOptions<CatalogSettings>>();
-                    var logger = services.GetService<ILogger<CatalogContextSeed>>();
+    public static class Get
+    {
+        private const int PageIndex = 0;
+        private const int PageCount = 4;
 
-                    new CatalogContextSeed()
-                    .SeedAsync(context, env, settings, logger)
-                    .Wait();
-                })
-                .MigrateDbContext<IntegrationEventLogContext>((_, __) => { });
-
-            return testServer;
+        public static string Items(bool paginated = false)
+        {
+            return paginated
+                ? "api/v1/catalog/items" + Paginated(PageIndex, PageCount)
+                : "api/v1/catalog/items";
         }
 
-        public static class Get
+        public static string ItemById(int id)
         {
-            private const int PageIndex = 0;
-            private const int PageCount = 4;
-
-            public static string Items(bool paginated = false)
-            {
-                return paginated
-                    ? "api/v1/catalog/items" + Paginated(PageIndex, PageCount)
-                    : "api/v1/catalog/items";
-            }
-
-            public static string ItemById(int id)
-            {
-                return $"api/v1/catalog/items/{id}";
-            }
-
-            public static string ItemByName(string name, bool paginated = false)
-            {
-                return paginated
-                    ? $"api/v1/catalog/items/withname/{name}" + Paginated(PageIndex, PageCount)
-                    : $"api/v1/catalog/items/withname/{name}";
-            }
-
-            public static string Types = "api/v1/catalog/catalogtypes";
-
-            public static string Brands = "api/v1/catalog/catalogbrands";
-
-            public static string Filtered(int catalogTypeId, int catalogBrandId, bool paginated = false)
-            {
-                return paginated
-                    ? $"api/v1/catalog/items/type/{catalogTypeId}/brand/{catalogBrandId}" + Paginated(PageIndex, PageCount)
-                    : $"api/v1/catalog/items/type/{catalogTypeId}/brand/{catalogBrandId}";
-            }
-
-            private static string Paginated(int pageIndex, int pageCount)
-            {
-                return $"?pageIndex={pageIndex}&pageSize={pageCount}";
-            }
+            return $"api/v1/catalog/items/{id}";
         }
+
+        public static string ItemByName(string name, bool paginated = false)
+        {
+            return paginated
+                ? $"api/v1/catalog/items/withname/{name}" + Paginated(PageIndex, PageCount)
+                : $"api/v1/catalog/items/withname/{name}";
+        }
+
+        public static string Types = "api/v1/catalog/catalogtypes";
+
+        public static string Brands = "api/v1/catalog/catalogbrands";
+
+        public static string Filtered(int catalogTypeId, int catalogBrandId, bool paginated = false)
+        {
+            return paginated
+                ? $"api/v1/catalog/items/type/{catalogTypeId}/brand/{catalogBrandId}" + Paginated(PageIndex, PageCount)
+                : $"api/v1/catalog/items/type/{catalogTypeId}/brand/{catalogBrandId}";
+        }
+
+        private static string Paginated(int pageIndex, int pageCount)
+        {
+            return $"?pageIndex={pageIndex}&pageSize={pageCount}";
+        }
+    }
+
+    public static class Put
+    {
+        public static string UpdateCatalogProduct = "api/v1/catalog/items";
     }
 }
